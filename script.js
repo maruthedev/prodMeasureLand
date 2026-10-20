@@ -23,6 +23,9 @@ class PolygonPointCalculator {
     this.highlightedProjection = false;
     this.lastCalculatedResult = null;
     this.detailsExpanded = false;
+    this.canvasLabelOffsets = new Map();
+    this.canvasLabels = [];
+    this.draggedCanvasLabel = null;
 
     this.polygonNames = {
       3: ['A', 'B', 'C'],
@@ -71,6 +74,68 @@ class PolygonPointCalculator {
       this.detailsExpanded = !this.detailsExpanded;
       this.updateDetailsVisibility();
     });
+
+    this.bindCanvasLabelDragging();
+  }
+
+  bindCanvasLabelDragging() {
+    this.canvas.addEventListener('pointerdown', (event) => {
+      const point = this.getCanvasPointerPosition(event);
+      const label = [...this.canvasLabels].reverse().find((item) => (
+        point.x >= item.left && point.x <= item.right && point.y >= item.top && point.y <= item.bottom
+      ));
+
+      if (!label) return;
+
+      event.preventDefault();
+      this.draggedCanvasLabel = {
+        key: label.key,
+        pointerId: event.pointerId,
+        x: point.x,
+        y: point.y
+      };
+      this.canvas.setPointerCapture(event.pointerId);
+      this.canvas.style.cursor = 'grabbing';
+    });
+
+    this.canvas.addEventListener('pointermove', (event) => {
+      const point = this.getCanvasPointerPosition(event);
+
+      if (this.draggedCanvasLabel && this.draggedCanvasLabel.pointerId === event.pointerId) {
+        event.preventDefault();
+        const offset = this.canvasLabelOffsets.get(this.draggedCanvasLabel.key) || { x: 0, y: 0 };
+        offset.x += point.x - this.draggedCanvasLabel.x;
+        offset.y += point.y - this.draggedCanvasLabel.y;
+        this.canvasLabelOffsets.set(this.draggedCanvasLabel.key, offset);
+        this.draggedCanvasLabel.x = point.x;
+        this.draggedCanvasLabel.y = point.y;
+        this.drawPolygonPreview(this.lastCalculatedResult?.previewOptions || {});
+        return;
+      }
+
+      const overLabel = this.canvasLabels.some((item) => (
+        point.x >= item.left && point.x <= item.right && point.y >= item.top && point.y <= item.bottom
+      ));
+      this.canvas.style.cursor = overLabel ? 'grab' : 'default';
+    });
+
+    const finishDragging = (event) => {
+      if (!this.draggedCanvasLabel || this.draggedCanvasLabel.pointerId !== event.pointerId) return;
+      this.draggedCanvasLabel = null;
+      this.canvas.style.cursor = 'default';
+    };
+
+    this.canvas.addEventListener('pointerup', finishDragging);
+    this.canvas.addEventListener('pointercancel', finishDragging);
+    this.canvas.addEventListener('lostpointercapture', finishDragging);
+  }
+
+  getCanvasPointerPosition(event) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) * (this.canvas.width / rect.width),
+      y: (event.clientY - rect.top) * (this.canvas.height / rect.height)
+    };
   }
 
   updateDetailsVisibility() {
@@ -88,6 +153,7 @@ class PolygonPointCalculator {
   resetCalculator() {
     this.lastCalculatedResult = null;
     this.highlightedSideIndex = null;
+    this.canvasLabelOffsets.clear();
     this.polygonSides.value = 3;
     this.renderSideInputs(3);
     this.renderSideList(3);
@@ -127,6 +193,7 @@ class PolygonPointCalculator {
           this.highlightedSideIndex = index;
         }
         this.renderSideList(count);
+        this.updateResultSummary();
         this.drawPolygonPreview(this.lastCalculatedResult?.previewOptions || {});
       });
 
@@ -296,14 +363,14 @@ class PolygonPointCalculator {
     return ab + bc > ca && ab + ca > bc && bc + ca > ab;
   }
 
-  fitVerticesToCanvas(vertices, padding = 30) {
+  fitVerticesToCanvas(vertices, padding = 30, boundsPoints = vertices) {
     const canvas = this.canvas;
     if (!vertices || vertices.length === 0) {
       return [];
     }
 
-    const xs = vertices.map((point) => point.x);
-    const ys = vertices.map((point) => point.y);
+    const xs = boundsPoints.map((point) => point.x);
+    const ys = boundsPoints.map((point) => point.y);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
@@ -323,13 +390,13 @@ class PolygonPointCalculator {
     }));
   }
 
-  getCanvasTransform(vertices, padding = 30) {
+  getCanvasTransform(vertices, padding = 30, boundsPoints = vertices) {
     if (!vertices || vertices.length === 0) {
       return null;
     }
 
-    const xs = vertices.map((point) => point.x);
-    const ys = vertices.map((point) => point.y);
+    const xs = boundsPoints.map((point) => point.x);
+    const ys = boundsPoints.map((point) => point.y);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
@@ -444,15 +511,7 @@ class PolygonPointCalculator {
       previewOptions: { center, triangle, insidePolygon, polygonType: 3, nearestSide }
     };
 
-    this.resultSummary.innerHTML = `
-      <p class="mb-2"><strong>Đa giác:</strong> ${vertexNames.join('')}</p>
-      <p class="mb-2"><strong>Điểm cách đều:</strong> (${center.x.toFixed(2)} m, ${center.y.toFixed(2)} m)</p>
-      <p class="mb-2"><strong>Bán kính cách đều:</strong> ${this.formatMeter(vertexRows[0].value)}</p>
-      <p class="mb-2"><strong>Trạng thái:</strong> ${insidePolygon ? 'Điểm này nằm bên trong đa giác.' : 'CẢNH BÁO: điểm này nằm ngoài đa giác.'}</p>
-      <p class="mb-2"><strong>PH:</strong> ${this.formatMeter(phLength)}</p>
-      <p class="mb-2"><strong>H đến ${nearestSide.startLabel}:</strong> ${this.formatMeter(hToStart)}</p>
-      <p class="mb-0"><strong>H đến ${nearestSide.endLabel}:</strong> ${this.formatMeter(hToEnd)}</p>
-    `;
+    this.updateResultSummary();
 
     this.vertexDistances.innerHTML = vertexRows
       .map(({ name, value }) => `<tr><td>${name}</td><td>${this.formatMeter(value)}</td></tr>`)
@@ -478,6 +537,37 @@ class PolygonPointCalculator {
     } else {
       this.showMessage('CẢNH BÁO: điểm tính toán nằm ngoài đa giác. Hãy kiểm tra lại dữ liệu đo đạc.', 'danger');
     }
+  }
+
+  updateResultSummary() {
+    if (!this.lastCalculatedResult) return;
+
+    const { center, triangle, nearestSide } = this.lastCalculatedResult;
+    const sideIndex = this.highlightedSideIndex;
+    const side = sideIndex === null
+      ? nearestSide
+      : {
+          name: this.sideLabels[3][sideIndex],
+          start: triangle[sideIndex],
+          end: triangle[(sideIndex + 1) % triangle.length],
+          startLabel: this.polygonNames[3][sideIndex],
+          endLabel: this.polygonNames[3][(sideIndex + 1) % triangle.length]
+        };
+    const projection = this.projectPointToSegment(center, side.start, side.end);
+    const vertexDistance = this.distanceBetween(center, triangle[0]);
+    const phLength = this.distanceBetween(center, projection);
+    const hToStart = this.distanceBetween(projection, side.start);
+    const hToEnd = this.distanceBetween(projection, side.end);
+    const sideDescription = sideIndex === null ? 'cạnh gần nhất' : `cạnh ${side.name} đang khảo sát`;
+
+    this.resultSummary.innerHTML = `
+      <p class="mb-2"><strong>Đa giác:</strong> ${this.polygonNames[3].join('')}</p>
+      <p class="mb-2"><strong>Khoảng cách từ điểm P tới các đỉnh:</strong> ${this.formatMeter(vertexDistance)}</p>
+      <p class="mb-2"><strong>Khoảng cách từ điểm P tới ${sideDescription}:</strong> ${this.formatMeter(phLength)}</p>
+      <p class="mb-2"><strong>Cạnh được thống kê:</strong> ${side.name}</p>
+      <p class="mb-2"><strong>H đến ${side.startLabel}:</strong> ${this.formatMeter(hToStart)}</p>
+      <p class="mb-0"><strong>H đến ${side.endLabel}:</strong> ${this.formatMeter(hToEnd)}</p>
+    `;
   }
 
   getVerticesFromInput(count) {
@@ -519,23 +609,42 @@ class PolygonPointCalculator {
     });
   }
 
-  drawCanvasText(text, x, y, color = '#0f172a', font = 'bold 12px Segoe UI', align = 'center', bg = null) {
+  drawCanvasText(text, x, y, color = '#0f172a', font = 'bold 12px Segoe UI', align = 'center', bg = null, draggableKey = null) {
     const drawingCtx = this.ctx || this.canvas.getContext('2d');
+    const renderedWidth = this.canvas.getBoundingClientRect().width || this.canvas.width;
+    const fontScale = Math.min(2, Math.max(1, this.canvas.width / renderedWidth));
+    const scaledFont = font.replace(/(\d+(?:\.\d+)?)px/g, (_, size) => `${Number(size) * fontScale}px`);
+    const offset = draggableKey ? this.canvasLabelOffsets.get(draggableKey) || { x: 0, y: 0 } : { x: 0, y: 0 };
+    const textX = x + offset.x;
+    const textY = y + offset.y;
     drawingCtx.save();
-    drawingCtx.font = font;
+    drawingCtx.font = scaledFont;
     drawingCtx.textAlign = align;
     drawingCtx.fillStyle = color;
 
     if (bg) {
       const metrics = drawingCtx.measureText(text);
-      const padX = 6;
+      const padX = 6 * fontScale;
       drawingCtx.fillStyle = bg;
-      const rectX = align === 'left' ? x : x - metrics.width / 2 - padX;
-      drawingCtx.fillRect(rectX, y - 12, metrics.width + padX * 2, 18);
+      const rectX = align === 'left' ? textX : textX - metrics.width / 2 - padX;
+      drawingCtx.fillRect(rectX, textY - 12 * fontScale, metrics.width + padX * 2, 18 * fontScale);
       drawingCtx.fillStyle = color;
     }
 
-    drawingCtx.fillText(text, x, y);
+    drawingCtx.fillText(text, textX, textY);
+    if (draggableKey) {
+      const metrics = drawingCtx.measureText(text);
+      const textWidth = metrics.width + 14 * fontScale;
+      const left = align === 'left' ? textX - 6 * fontScale : textX - textWidth / 2;
+      const fontSize = Number((scaledFont.match(/([\d.]+)px/) || [0, 12])[1]);
+      this.canvasLabels.push({
+        key: draggableKey,
+        left,
+        right: left + textWidth,
+        top: textY - fontSize * 1.3,
+        bottom: textY + fontSize * 0.6
+      });
+    }
     drawingCtx.restore();
   }
 
@@ -584,7 +693,7 @@ class PolygonPointCalculator {
       const label = point.label || this.polygonNames[count][index];
       const baseX = point.x + 12;
       const baseY = point.y - 12;
-      this.drawCanvasText(label, baseX, baseY, '#0f172a', 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.7)');
+      this.drawCanvasText(label, baseX, baseY, '#0f172a', 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.7)', `vertex:${count}:${index}`);
     });
   }
 
@@ -592,6 +701,7 @@ class PolygonPointCalculator {
     const { canvas, ctx } = this;
     const count = Number(this.polygonSides.value);
     const highlightedIndex = this.highlightedSideIndex;
+    this.canvasLabels = [];
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#f8f9ff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -607,7 +717,8 @@ class PolygonPointCalculator {
           ...point,
           label: this.polygonNames[3][index]
         }));
-        vertices = this.fitVerticesToCanvas(triangleWithLabels);
+        const boundsPoints = options.center ? [...options.triangle, options.center] : triangleWithLabels;
+        vertices = this.fitVerticesToCanvas(triangleWithLabels, 30, boundsPoints);
       } else {
         const values = this.getSideInputs(3)
           .map((input) => Number(input?.value || 0))
@@ -671,13 +782,14 @@ class PolygonPointCalculator {
           ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
           ctx.fillStyle = 'rgba(71, 85, 105, 0.16)';
           ctx.fill();
-          this.drawCanvasText(point.label, point.x + 10, point.y - 10, 'rgba(71, 85, 105, 0.28)', 'bold 12px Segoe UI', 'left');
+          this.drawCanvasText(point.label, point.x + 10, point.y - 10, 'rgba(71, 85, 105, 0.28)', 'bold 12px Segoe UI', 'left', null, `vertex:${count}:${index}`);
         });
       }
     }
 
     if (options.center && options.triangle && highlightedIndex !== null && highlightedIndex >= 0) {
-      const triangleTransform = this.getCanvasTransform(options.triangle, 30);
+      const boundsPoints = [...options.triangle, options.center];
+      const triangleTransform = this.getCanvasTransform(options.triangle, 30, boundsPoints);
       if (triangleTransform) {
         const centerCanvas = this.transformPointToCanvas(options.center, triangleTransform);
         const sideStartModel = options.triangle[highlightedIndex];
@@ -706,16 +818,16 @@ class PolygonPointCalculator {
         ctx.lineWidth = 4;
         ctx.stroke();
 
-        const drawClearPoint = (point, label, color) => {
+        const drawClearPoint = (point, label, color, draggableKey = null) => {
           ctx.beginPath();
           ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
           ctx.fillStyle = color;
           ctx.fill();
-          this.drawCanvasText(label, point.x + 9, point.y - 9, color, 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.92)');
+          this.drawCanvasText(label, point.x + 9, point.y - 9, color, 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.92)', draggableKey);
         };
 
-        drawClearPoint(sideStart, startLabel, '#0d3b91');
-        drawClearPoint(sideEnd, endLabel, '#0d3b91');
+        drawClearPoint(sideStart, startLabel, '#0d3b91', `vertex:${count}:${highlightedIndex}`);
+        drawClearPoint(sideEnd, endLabel, '#0d3b91', `vertex:${count}:${(highlightedIndex + 1) % count}`);
 
         ctx.beginPath();
         ctx.arc(projection.x, projection.y, 5, 0, Math.PI * 2);
@@ -731,15 +843,16 @@ class PolygonPointCalculator {
         const midpointBH = { x: (projection.x + sideEnd.x) / 2, y: (projection.y + sideEnd.y) / 2 };
         const sideMidpoint = { x: (sideStart.x + sideEnd.x) / 2, y: (sideStart.y + sideEnd.y) / 2 };
 
-        this.drawCanvasText(`PH = ${this.formatMeter(phLength)}`, midpointPH.x, midpointPH.y - 12, '#92400e', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
-        this.drawCanvasText(`${startLabel}H = ${this.formatMeter(hToStart)}`, midpointAH.x, midpointAH.y - 12, '#1e293b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
-        this.drawCanvasText(`${endLabel}H = ${this.formatMeter(hToEnd)}`, midpointBH.x, midpointBH.y - 12, '#1e293b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
-        this.drawCanvasText(`${sideName} = ${this.formatMeter(sideLength)}`, sideMidpoint.x, sideMidpoint.y + 22, '#0d3b91', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
+        this.drawCanvasText(`PH = ${this.formatMeter(phLength)}`, midpointPH.x, midpointPH.y - 12, '#92400e', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)', `distance:PH:${highlightedIndex}`);
+        this.drawCanvasText(`${startLabel}H = ${this.formatMeter(hToStart)}`, midpointAH.x, midpointAH.y - 12, '#1e293b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)', `distance:${startLabel}H:${highlightedIndex}`);
+        this.drawCanvasText(`${endLabel}H = ${this.formatMeter(hToEnd)}`, midpointBH.x, midpointBH.y - 12, '#1e293b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)', `distance:${endLabel}H:${highlightedIndex}`);
+        this.drawCanvasText(`${sideName} = ${this.formatMeter(sideLength)}`, sideMidpoint.x, sideMidpoint.y + 22, '#0d3b91', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)', `side-length:${count}:${highlightedIndex}`);
       }
     }
 
     if (options.center && options.triangle && highlightedIndex === null) {
-      const triangleTransform = this.getCanvasTransform(options.triangle, 30);
+      const boundsPoints = [...options.triangle, options.center];
+      const triangleTransform = this.getCanvasTransform(options.triangle, 30, boundsPoints);
       if (triangleTransform) {
         const centerCanvas = this.transformPointToCanvas(options.center, triangleTransform);
         options.triangle.forEach((vertex, index) => {
@@ -762,13 +875,14 @@ class PolygonPointCalculator {
           const labelY = midpointY + (offsetY / offsetLength) * 12;
           const vertexName = this.polygonNames[count][index];
           const distance = this.distanceBetween(options.center, vertex);
-          this.drawCanvasText(`P${vertexName} = ${this.formatMeter(distance)}`, labelX, labelY, '#991b1b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.92)');
+          this.drawCanvasText(`P${vertexName} = ${this.formatMeter(distance)}`, labelX, labelY, '#991b1b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.92)', `distance:P${vertexName}`);
         });
       }
     }
 
     if (options.center && options.triangle) {
-      const centerTransform = this.getCanvasTransform(options.triangle, 30);
+      const boundsPoints = [...options.triangle, options.center];
+      const centerTransform = this.getCanvasTransform(options.triangle, 30, boundsPoints);
       if (centerTransform) {
         const centerCanvas = this.transformPointToCanvas(options.center, centerTransform);
         ctx.beginPath();
@@ -780,11 +894,7 @@ class PolygonPointCalculator {
     }
 
     if (!vertices.length) {
-      ctx.font = '16px Segoe UI';
-      ctx.fillStyle = '#6b7280';
-      ctx.textAlign = 'center';
-      ctx.fillText('Nhập độ dài các cạnh để xem hình đa giác', canvas.width / 2, canvas.height / 2);
-      ctx.textAlign = 'start';
+      this.drawCanvasText('Nhập độ dài các cạnh để xem hình đa giác', canvas.width / 2, canvas.height / 2, '#6b7280', '16px Segoe UI', 'center');
     }
   }
 
