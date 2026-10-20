@@ -108,42 +108,23 @@ class PolygonPointCalculator {
 
     this.sideList.style.display = 'flex';
 
-    const sideItems = [...labels.map((label, index) => ({ label, index }))];
-    if (this.lastCalculatedResult && this.lastCalculatedResult.nearestSide) {
-      sideItems.push({ label: 'PH', index: 'projection' });
-    }
-
-    sideItems.forEach((item) => {
-      const isProjection = item.index === 'projection';
-      const itemLabel = isProjection ? 'PH' : item.label;
-      const itemIndex = isProjection ? null : item.index;
-
+    labels.forEach((label, index) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'list-group-item list-group-item-action';
-      button.dataset.index = String(itemIndex ?? 'projection');
+      button.dataset.index = String(index);
+      const value = Number(document.getElementById(`side-${index}`)?.value || 0);
+      button.innerHTML = `${label}<span class="float-end text-muted">${value > 0 ? this.formatMeter(value) : '-'}</span>`;
 
-      if (isProjection) {
-        button.innerHTML = `${itemLabel}<span class="float-end text-muted">${this.formatMeter(this.lastCalculatedResult.phLength)}</span>`;
-      } else {
-        const value = Number(document.getElementById(`side-${item.index}`)?.value || 0);
-        if (value > 0) {
-          button.innerHTML = `${itemLabel}<span class="float-end text-muted">${this.formatMeter(value)}</span>`;
-        } else {
-          button.innerHTML = `${itemLabel}<span class="float-end text-muted">-</span>`;
-        }
-      }
-
-      if (this.highlightedSideIndex === itemIndex || (isProjection && this.highlightedSideIndex === 'projection')) {
+      if (this.highlightedSideIndex === index) {
         button.classList.add('active');
       }
 
       button.addEventListener('click', () => {
-        const nextIndex = isProjection ? 'projection' : itemIndex;
-        if (this.highlightedSideIndex === nextIndex) {
+        if (this.highlightedSideIndex === index) {
           this.highlightedSideIndex = null;
         } else {
-          this.highlightedSideIndex = nextIndex;
+          this.highlightedSideIndex = index;
         }
         this.renderSideList(count);
         this.drawPolygonPreview(this.lastCalculatedResult?.previewOptions || {});
@@ -667,8 +648,7 @@ class PolygonPointCalculator {
       });
       ctx.closePath();
 
-      const fillAlpha = highlightedIndex === null ? 0.10 : 0.04;
-      ctx.fillStyle = `rgba(37, 99, 235, ${fillAlpha})`;
+      ctx.fillStyle = highlightedIndex === null ? 'rgba(37, 99, 235, 0.10)' : 'rgba(90, 103, 120, 0.035)';
       ctx.fill();
 
       vertices.forEach((point, index) => {
@@ -677,87 +657,125 @@ class PolygonPointCalculator {
         ctx.beginPath();
         ctx.moveTo(point.x, point.y);
         ctx.lineTo(next.x, next.y);
-        ctx.strokeStyle = isSelected ? '#0d6efd' : highlightedIndex === null ? '#2563eb' : 'rgba(37, 99, 235, 0.22)';
+        ctx.strokeStyle = isSelected ? '#0d6efd' : highlightedIndex === null ? '#2563eb' : 'rgba(71, 85, 105, 0.12)';
         ctx.lineWidth = isSelected ? 4 : highlightedIndex === null ? 2 : 1.5;
         ctx.stroke();
 
-        if (highlightedIndex !== null && isSelected) {
-          const midX = (point.x + next.x) / 2;
-          const midY = (point.y + next.y) / 2;
-          const sideLength = this.getPolygonSideLengths(count)[index] ?? 0;
-          const label = `${this.sideLabels[count][index]} = ${this.formatMeter(sideLength)}`;
-          this.drawCanvasText(label, midX, midY - 12, '#0d3b91', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.9)');
-        }
       });
 
-      this.drawVertexLabels(vertices, count);
+      if (highlightedIndex === null) {
+        this.drawVertexLabels(vertices, count);
+      } else {
+        vertices.forEach((point, index) => {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(71, 85, 105, 0.16)';
+          ctx.fill();
+          this.drawCanvasText(point.label, point.x + 10, point.y - 10, 'rgba(71, 85, 105, 0.28)', 'bold 12px Segoe UI', 'left');
+        });
+      }
     }
 
-    if (options.center && options.triangle && options.nearestSide) {
+    if (options.center && options.triangle && highlightedIndex !== null && highlightedIndex >= 0) {
       const triangleTransform = this.getCanvasTransform(options.triangle, 30);
       if (triangleTransform) {
         const centerCanvas = this.transformPointToCanvas(options.center, triangleTransform);
-        const sideStart = this.transformPointToCanvas(options.nearestSide.start, triangleTransform);
-        const sideEnd = this.transformPointToCanvas(options.nearestSide.end, triangleTransform);
+        const sideStartModel = options.triangle[highlightedIndex];
+        const sideEndModel = options.triangle[(highlightedIndex + 1) % options.triangle.length];
+        const sideStart = this.transformPointToCanvas(sideStartModel, triangleTransform);
+        const sideEnd = this.transformPointToCanvas(sideEndModel, triangleTransform);
         const projection = this.projectPointToSegment(centerCanvas, sideStart, sideEnd);
-
-        const isProjectionSelected = this.highlightedSideIndex === 'projection';
-        const isSideSelected = this.highlightedSideIndex !== null && this.highlightedSideIndex !== 'projection';
+        const sideName = this.sideLabels[count][highlightedIndex];
+        const sideLength = this.getPolygonSideLengths(count)[highlightedIndex];
+        const startLabel = this.polygonNames[count][highlightedIndex];
+        const endLabel = this.polygonNames[count][(highlightedIndex + 1) % count];
 
         ctx.beginPath();
         ctx.setLineDash([5, 5]);
-        ctx.strokeStyle = isProjectionSelected ? '#f59e0b' : '#f59e0b';
-        ctx.lineWidth = isProjectionSelected ? 2.8 : 2;
+        ctx.strokeStyle = '#d97706';
+        ctx.lineWidth = 2.5;
         ctx.moveTo(centerCanvas.x, centerCanvas.y);
         ctx.lineTo(projection.x, projection.y);
         ctx.stroke();
-
-        ctx.beginPath();
-        ctx.setLineDash([5, 5]);
-        ctx.moveTo(projection.x, projection.y);
-        ctx.lineTo(sideStart.x, sideStart.y);
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.setLineDash([5, 5]);
-        ctx.moveTo(projection.x, projection.y);
-        ctx.lineTo(sideEnd.x, sideEnd.y);
-        ctx.stroke();
-
         ctx.setLineDash([]);
 
         ctx.beginPath();
+        ctx.moveTo(sideStart.x, sideStart.y);
+        ctx.lineTo(sideEnd.x, sideEnd.y);
+        ctx.strokeStyle = '#0d6efd';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        const drawClearPoint = (point, label, color) => {
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+          ctx.fillStyle = color;
+          ctx.fill();
+          this.drawCanvasText(label, point.x + 9, point.y - 9, color, 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.92)');
+        };
+
+        drawClearPoint(sideStart, startLabel, '#0d3b91');
+        drawClearPoint(sideEnd, endLabel, '#0d3b91');
+
+        ctx.beginPath();
         ctx.arc(projection.x, projection.y, 5, 0, Math.PI * 2);
-        ctx.fillStyle = '#f59e0b';
+        ctx.fillStyle = '#d97706';
         ctx.fill();
+        this.drawCanvasText('H', projection.x + 9, projection.y - 9, '#b45309', 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.92)');
 
-        this.drawCanvasText('H', projection.x + 8, projection.y - 8, '#b45309', 'bold 12px Segoe UI', 'left');
-
-        const phLength = this.distanceBetween(options.center, options.nearestSide.projection);
+        const phLength = this.distanceBetween(options.center, this.projectPointToSegment(options.center, sideStartModel, sideEndModel));
+        const hToStart = this.distanceBetween(this.projectPointToSegment(options.center, sideStartModel, sideEndModel), sideStartModel);
+        const hToEnd = this.distanceBetween(this.projectPointToSegment(options.center, sideStartModel, sideEndModel), sideEndModel);
         const midpointPH = { x: (centerCanvas.x + projection.x) / 2, y: (centerCanvas.y + projection.y) / 2 };
-        const labelPH = `PH = ${this.formatMeter(phLength)}`;
-        const labelOffset = 22;
-        if (isProjectionSelected || this.highlightedSideIndex === null) {
-          this.drawCanvasText(labelPH, midpointPH.x, midpointPH.y - labelOffset, '#b45309', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.9)');
-        }
+        const midpointAH = { x: (projection.x + sideStart.x) / 2, y: (projection.y + sideStart.y) / 2 };
+        const midpointBH = { x: (projection.x + sideEnd.x) / 2, y: (projection.y + sideEnd.y) / 2 };
+        const sideMidpoint = { x: (sideStart.x + sideEnd.x) / 2, y: (sideStart.y + sideEnd.y) / 2 };
 
-        const hToStart = this.distanceBetween(options.nearestSide.projection, options.nearestSide.start);
-        const hToEnd = this.distanceBetween(options.nearestSide.projection, options.nearestSide.end);
+        this.drawCanvasText(`PH = ${this.formatMeter(phLength)}`, midpointPH.x, midpointPH.y - 12, '#92400e', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
+        this.drawCanvasText(`${startLabel}H = ${this.formatMeter(hToStart)}`, midpointAH.x, midpointAH.y - 12, '#1e293b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
+        this.drawCanvasText(`${endLabel}H = ${this.formatMeter(hToEnd)}`, midpointBH.x, midpointBH.y - 12, '#1e293b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
+        this.drawCanvasText(`${sideName} = ${this.formatMeter(sideLength)}`, sideMidpoint.x, sideMidpoint.y + 22, '#0d3b91', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.94)');
+      }
+    }
 
-        const midStart = { x: (projection.x + sideStart.x) / 2, y: (projection.y + sideStart.y) / 2 };
-        const midEnd = { x: (projection.x + sideEnd.x) / 2, y: (projection.y + sideEnd.y) / 2 };
+    if (options.center && options.triangle && highlightedIndex === null) {
+      const triangleTransform = this.getCanvasTransform(options.triangle, 30);
+      if (triangleTransform) {
+        const centerCanvas = this.transformPointToCanvas(options.center, triangleTransform);
+        options.triangle.forEach((vertex, index) => {
+          const vertexCanvas = this.transformPointToCanvas(vertex, triangleTransform);
+          ctx.beginPath();
+          ctx.setLineDash([5, 5]);
+          ctx.strokeStyle = 'rgba(220, 38, 38, 0.62)';
+          ctx.lineWidth = 1.5;
+          ctx.moveTo(centerCanvas.x, centerCanvas.y);
+          ctx.lineTo(vertexCanvas.x, vertexCanvas.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
 
-        if (isProjectionSelected || this.highlightedSideIndex === null || isSideSelected) {
-          this.drawCanvasText(`${options.nearestSide.startLabel}H = ${this.formatMeter(hToStart)}`, midStart.x, midStart.y - 14, '#0f172a', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.9)');
-          this.drawCanvasText(`${options.nearestSide.endLabel}H = ${this.formatMeter(hToEnd)}`, midEnd.x, midEnd.y - 14, '#0f172a', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.9)');
-        }
+          const midpointX = (centerCanvas.x + vertexCanvas.x) / 2;
+          const midpointY = (centerCanvas.y + vertexCanvas.y) / 2;
+          const offsetX = vertexCanvas.y - centerCanvas.y;
+          const offsetY = centerCanvas.x - vertexCanvas.x;
+          const offsetLength = Math.hypot(offsetX, offsetY) || 1;
+          const labelX = midpointX + (offsetX / offsetLength) * 12;
+          const labelY = midpointY + (offsetY / offsetLength) * 12;
+          const vertexName = this.polygonNames[count][index];
+          const distance = this.distanceBetween(options.center, vertex);
+          this.drawCanvasText(`P${vertexName} = ${this.formatMeter(distance)}`, labelX, labelY, '#991b1b', 'bold 11px Segoe UI', 'center', 'rgba(255,255,255,0.92)');
+        });
+      }
+    }
 
+    if (options.center && options.triangle) {
+      const centerTransform = this.getCanvasTransform(options.triangle, 30);
+      if (centerTransform) {
+        const centerCanvas = this.transformPointToCanvas(options.center, centerTransform);
         ctx.beginPath();
         ctx.arc(centerCanvas.x, centerCanvas.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = '#dc2626';
         ctx.fill();
-
-        this.drawCanvasText('P', centerCanvas.x + 8, centerCanvas.y - 8, '#991b1b', 'bold 12px Segoe UI', 'left');
+        this.drawCanvasText('P', centerCanvas.x + 9, centerCanvas.y - 9, '#991b1b', 'bold 12px Segoe UI', 'left', 'rgba(255,255,255,0.92)');
       }
     }
 
